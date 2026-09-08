@@ -267,22 +267,10 @@ Apr 14 16:31:44 Rocky8.6 systemd[1]: Started MySQL 8.0 database ser>
 - 如果主机安装的系统镜像仓库中没有想要的版本，可以手动下载想要的版本 rpm 包安装，  
   注意可能有依赖关系，因此选择装 bundle 包或者配置 yum 仓库  
 - 有的版本初始 root 账户没有有一个随机初始密码，到日志中查找，日志在 `/var/log/mysqld.log`  
+
 ### ubuntu22.04  
 - 先用 `sudo apt update` 更新  
 - 再搜索 mysql 的包版本，看是否满足要求  
-- 满足要求则直接安装，如果要安装 mysql-server，则安装 `amd64` 版本，安装时会同时安装客户端  
-- ubuntu22.04 安装的 mysql8.0.34 默认安装后服务开启，但仅监听本机，如果要远程主机登录，需要修改配置文件  
-```sql  
-[root@ubuntu22-c0 ~]$ vim /etc/mysql/mysql.conf.d/mysqld.cnf  
-```  
-```sql  
-# Instead of skip-networking the default is now to listen only on  
-# localhost which is more compatible and is not less secure.  
-bind-address		= 127.0.0.1  
-mysqlx-bind-address	= 127.0.0.1  
-```  
-将 `bind-address` 这行注释或改为 `0.0.0.0` 则可监听全部主机  
-      
 ```sql  
 [root@mysql ~]$ apt list mysql*  
 Listing... Done  
@@ -300,8 +288,26 @@ mysql-testsuite-8.0/jammy-updates,jammy-security 8.0.33-0ubuntu0.22.04.2 amd64
 mysql-testsuite/jammy-updates,jammy-security 8.0.33-0ubuntu0.22.04.2 all  
 mysqltcl/jammy 3.052-3ubuntu1 amd64  
 mysqltuner/jammy 1.7.17-1 all  
-[root@mysql ~]$ apt install -y mysql-server-8.0  
 ```  
+- 满足要求则直接安装，如果要安装 mysql-server，则安装 `amd64` 版本，安装时会同时安装客户端  
+```bash
+[root@mysql ~]$ apt install -y mysql-server-8.0  
+```
+- ubuntu22.04 安装的 mysql8.0.34 默认安装后服务开启，但仅监听本机，如果要远程主机登录，需要修改配置文件  
+```sql  
+[root@ubuntu22-c0 ~]$ vim /etc/mysql/mysql.conf.d/mysqld.cnf  
+```  
+```sql  
+# Instead of skip-networking the default is now to listen only on  
+# localhost which is more compatible and is not less secure.  
+bind-address		= 127.0.0.1  
+mysqlx-bind-address	= 127.0.0.1  
+```  
+将 `bind-address` 这行注释或改为 `0.0.0.0` 则可监听全部主机  
+修改后重启服务      
+```bash
+[root@ubuntu22-c0 ~]$ systemctl restart mysql.service  
+```
       
 - 安装完后查看自动安装上客户端  
 ```sql  
@@ -342,8 +348,8 @@ Bug tracker: https://github.com/dbcli/mycli/issues
 Thanks to the contributor - jbruno  
 MySQL root@(none):(none)> select user, host from mysql.user;  
 +------------------+-----------+  
-| user             | host      |  
-+------------------+-----------+  
+-- | user             | host      |  
+-- +------------------+-----------+  
 | debian-sys-maint | localhost |  
 | mysql.infoschema | localhost |  
 | mysql.session    | localhost |  
@@ -3512,6 +3518,7 @@ Time: 0.008s
 - status 命令查看  
       
 ## 创建用户账号  
+mysql 用户名和 Linux 登录用户名独立，互不相关。
 ```sql  
 MySQL root@(none):(none)> CREATE USER 'rocky8_81'@'10.0.0.81' IDENTIFIED BY '123';  
 Query OK, 0 rows affected  
