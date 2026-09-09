@@ -1561,27 +1561,63 @@ user		= mysql
 ## 修改数据库  
 > [13.1.2 ALTER DATABASE Statement](https://dev.mysql.com/doc/refman/8.0/en/alter-database.html)  
       
-```sql  
-ALTER {DATABASE | SCHEMA} [db_name]  
-    alter_option ...  
-      
-alter_option: {  
-    [DEFAULT] CHARACTER SET [=] charset_name  
-  | [DEFAULT] COLLATE [=] collation_name  
-  | [DEFAULT] ENCRYPTION [=] {'Y' | 'N'}  
-  | READ ONLY [=] {DEFAULT | 0 | 1}  
-}  
-```  
-      
-```sql  
-MySQL root@(none):(none)> ALTER DATABASE test1 CHARACTER SET utf8mb4;  
-You're about to run a destructive command.  
-Do you want to proceed? (y/n): y  
-Your call!  
-Query OK, 1 row affected  
-Time: 0.006s  
-```  
-      
+`ALTER` 是 DDL（数据定义语言），用来**修改已经存在的对象**，最常用：修改表、修改用户，还有修改数据库。
+`CREATE` 创建；`DROP` 删除；`ALTER` **改已经存在的东西**
+
+### ALTER USER 修改数据库账号
+作用：修改账号密码、认证插件
+```sql
+-- 修改root账号密码，改成caching_sha2_password
+ALTER USER 'root'@'localhost' IDENTIFIED WITH caching_sha2_password BY 'Root@123456';
+```
+- 可以改密码
+- 可以修改认证插件
+
+### ALTER TABLE
+```sql
+ALTER TABLE 表名 操作;
+```
+#### 新增字段
+```sql
+ALTER TABLE student ADD age INT;
+```
+
+#### 删除字段
+```sql
+ALTER TABLE student DROP age;
+```
+
+#### 修改字段类型 / 字段名
+```sql
+-- 修改字段类型
+ALTER TABLE student MODIFY age TINYINT;
+
+-- 修改字段名字+类型：old_name → new_name
+ALTER TABLE student CHANGE age stu_age INT;
+```
+> ✅ MODIFY：只改类型属性，不改字段名
+> ✅ CHANGE：字段名+类型都可以改
+
+#### 添加索引
+```sql
+ALTER TABLE student ADD INDEX idx_name(name);
+```
+
+#### 修改表名
+```sql
+ALTER TABLE student RENAME TO stu;
+```
+
+> ⚠️重点注意：
+> ALTER TABLE 修改表结构，**锁表**（MySQL InnoDB，大表会锁，生产谨慎执行）。
+> 大量数据的表执行alter，会阻塞读写。
+
+### ALTER DATABASE 修改数据库属性
+```sql
+ALTER DATABASE test CHARACTER SET utf8mb4;
+```
+修改数据库字符集。
+
 ## 删除数据库  
 > [13.1.24 DROP DATABASE Statement](https://dev.mysql.com/doc/refman/8.0/en/drop-database.html)  
       
@@ -1657,7 +1693,6 @@ MySQL root@(none):db0> CREATE TABLE IF NOT EXISTS customers (
 Query OK, 0 rows affected  
 Time: 0.043s  
 ```  
-      
       
 ### NULL 值  
 NULL 值是没有值，并非空串，如果指定值为 ''，在 NOT NULL 列中是允许的  
@@ -2176,7 +2211,108 @@ Your call!
 Query OK, 2 rows affected  
 Time: 0.004s  
 ```  
-      
+
+# delete 和 drop 区别
+
+> **DELETE删行数据；DROP删整个对象（结构+数据一起没）**
+
+## DELETE
+- 属于 **DML 数据操作语言**
+- 作用：删除**表里面的一行/多行数据**，**表结构还保留**
+- 支持 `WHERE` 条件，可以只删一部分数据
+```sql
+-- 删除id=5这一行，表还在，字段索引都还在
+DELETE FROM student WHERE id = 5;
+
+-- 删除表里全部数据，空表留下来
+DELETE FROM student;
+```
+特点：
+1. 表、字段、索引全部存在
+2. InnoDB支持事务，可以回滚撤销
+3. 自增id不会重置
+
+## DROP
+- 属于 **DDL 数据定义语言**
+- 作用：直接销毁整个对象：**表/数据库/用户，结构+数据全部清除**
+- **没有WHERE，不能局部删除**
+```sql
+DROP TABLE student;     -- 整张表彻底消失，结构、数据、索引全部删掉
+DROP DATABASE test;     -- 删除整个数据库
+DROP USER 'lh'@'127.0.0.1'; -- 删除数据库账号
+```
+特点：
+1. 对象直接消失
+2. DDL语句，MySQL默认**无法回滚，删除就找不回来**
+3. 生产环境非常谨慎使用
+
+## TRUNCATE
+```sql
+TRUNCATE TABLE student;
+```
+- DDL语句，清空表里**全部数据**，**表结构保留**
+- 不能加where，一次性清空所有行
+- 速度比delete快很多，自增id重置从1重新开始，不能事务回滚
+
+## 对比
+| 命令       | 类型 | 删除对象               | 表结构保留 | 支持WHERE | 可回滚(InnoDB) |
+| ---------- | ---- | ---------------------- | ---------- | --------- | -------------- |
+| DELETE     | DML  | 部分/全部**数据行**    | ✅保留      | ✅有       | ✅可以回滚      |
+| TRUNCATE   | DDL  | 全部数据               | ✅保留      | ❌无       | ❌不能回滚      |
+| DROP TABLE | DDL  | 整张表(结构+数据+索引) | ❌彻底删除  | ❌无       | ❌不能回滚      |
+
+# INSERT / UPDATE / ALTER 区别
+
+- `INSERT`：**新增一行数据**（往表里填新记录）
+- `UPDATE`：**修改已经存在的行数据**（改单元格内容）
+- `ALTER`：**修改表本身的结构**（改表格框架：加字段、删字段、改字段类型）
+
+> INSERT、UPDATE 属于 **DML（数据操作语言）** →操作**表里的内容（行）**
+> ALTER 属于 **DDL（数据定义语言）** →操作**表的骨架结构**
+
+## INSERT 插入（增加新行）
+往表里面**新增一条/多条记录**，原来的数据不动
+```sql
+-- 新增一行
+INSERT INTO student(id,name) VALUES(1,'张三');
+```
+类比：在纸质表格**新增加一整行填写内容**。
+
+## UPDATE 更新（修改已有行）
+修改**已经存在的旧行里面的值**，一定要记得`WHERE`，不然会更新全表！
+```sql
+-- 把id=1那一行的名字改成张三三
+UPDATE student SET name='张三三' WHERE id=1;
+```
+类比：**修改表格某一行已经写好的文字**，纸张、行列都不变，只是改内容。
+
+> ⚠️坑：不加WHERE条件，整张表所有行全部被修改！
+
+## ALTER 修改表结构
+不动表里已有的行数据，改**表的框架**：新增字段、删除字段、改字段类型、加索引
+```sql
+-- 给student表新增age字段（表格多一列）
+ALTER TABLE student ADD age INT;
+
+-- 修改字段类型
+ALTER TABLE student MODIFY age TINYINT;
+
+-- 删除一列
+ALTER TABLE student DROP age;
+```
+类比：**给纸质表格增加一列、删掉一列、修改列的格式**，已经写好的各行文字还在。
+
+# 对比表
+| 语句   | 分类 | 干什么                   | 作用对象             |
+| ------ | ---- | ------------------------ | -------------------- |
+| INSERT | DML  | 插入**新的数据行**       | 表里面的记录（内容） |
+| UPDATE | DML  | 修改**已存在数据行的值** | 表里面的记录（内容） |
+| DELETE | DML  | 删除**数据行**           | 表里面的记录（内容） |
+| ALTER  | DDL  | 修改**表结构**           | 字段、索引等表格骨架 |
+| CREATE | DDL  | 创建库、表、用户         | 新建骨架             |
+| DROP   | DDL  | 删除库、表、用户         | 直接销毁整个骨架     |
+
+
 # DQL 数据查询语言  
 - Data Query Language  
     
@@ -2255,8 +2391,6 @@ Time: 0.008s
 ```sql  
 MySQL root@(none):db0> SELECT cust_id,cust_name FROM customers WHERE cust_id < 10;  
 ```  
-      
-      
       
 ### WHERE 过滤数据  
       
@@ -2705,217 +2839,189 @@ Time: 0.005s
 - 多表查询时，一个为驱动表，另一个为被驱动表  
 先查询驱动表，根据过滤过滤条件筛选驱动表的记录  
 驱动中每选出一条符合的记录，到被驱动表中根据过滤条件查找匹配的记录  
-      
-### 交叉联接 (cross join)  
-两个表内容：  
-```sql  
-MySQL root@(none):db0> select * from products;  
-+---------+---------+-----------+------------+-----------+  
-| prod_id | vend_id | prod_name | prod_price | prod_desc |  
-+---------+---------+-----------+------------+-----------+  
-| 1       | 34      | a         | 23.00      |           |  
-| 2       | 34      | b         | 45.00      |           |  
-| 3       | 2       | c         | 21.00      |           |  
-| 4       | 2       | d         | 44.00      |           |  
-| 5       | 1       | e         | 22.00      |           |  
-+---------+---------+-----------+------------+-----------+  
-      
-5 rows in set  
-Time: 0.009s  
-MySQL root@(none):db0> select * from vendors;  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-| vend_id | vend_name | vend_address | vend_city | vend_state | vend_zip | vend_country |  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-| 1       | v1        | <null>       | <null>    | <null>     | <null>   | <null>       |  
-| 2       | v2        | <null>       | <null>    | <null>     | <null>   | <null>       |  
-| 34      | v34       | <null>       | <null>    | <null>     | <null>   | <null>       |  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-      
-3 rows in set  
-Time: 0.010s  
-```  
-      
-联合查询  
-```sql  
-MySQL root@(none):db0> select v.vend_id, v.vend_name,p.prod_name,p.prod_price from  
-                    -> vendors as v, products as p;  
-+---------+-----------+-----------+------------+  
-| vend_id | vend_name | prod_name | prod_price |  
-+---------+-----------+-----------+------------+  
-| 34      | v34       | a         | 23.00      |  
-| 2       | v2        | a         | 23.00      |  
-| 1       | v1        | a         | 23.00      |  
-| 34      | v34       | b         | 45.00      |  
-| 2       | v2        | b         | 45.00      |  
-| 1       | v1        | b         | 45.00      |  
-| 34      | v34       | c         | 21.00      |  
-| 2       | v2        | c         | 21.00      |  
-| 1       | v1        | c         | 21.00      |  
-| 34      | v34       | d         | 44.00      |  
-| 2       | v2        | d         | 44.00      |  
-| 1       | v1        | d         | 44.00      |  
-| 34      | v34       | e         | 22.00      |  
-| 2       | v2        | e         | 22.00      |  
-| 1       | v1        | e         | 22.00      |  
-+---------+-----------+-----------+------------+  
-      
-15 rows in set  
-Time: 0.012s  
-```  
-结果为笛卡尔积，最终的行数是将第一个表中的行数乘以第二个表中的行数，也叫交叉联接（cross join）  
-没有筛选结果，因此驱动表的每一条记录都筛选出来，筛选出的每一条记录与被驱动表匹配的记录组合，  
-被驱动表也没有筛选条件，因此结果为笛卡尔积  
-      
-### 内联接  
-```sql  
-MySQL root@(none):db0> SELECT v.vend_id,v.vend_name,p.prod_name,p.prod_price FROM  
-                    -> vendors AS v INNER JOIN products AS p  
-                    -> ON v.vend_id = p.vend_id;  
-+---------+-----------+-----------+------------+  
-| vend_id | vend_name | prod_name | prod_price |  
-+---------+-----------+-----------+------------+  
-| 34      | v34       | a         | 23.00      |  
-| 34      | v34       | b         | 45.00      |  
-| 2       | v2        | c         | 21.00      |  
-| 2       | v2        | d         | 44.00      |  
-| 1       | v1        | e         | 22.00      |  
-+---------+-----------+-----------+------------+  
-      
-5 rows in set  
-Time: 0.010s  
-```  
-      
-假设上面驱动表为 v，被驱动表为 p；驱动表的全部记录都被筛选，而每一条驱动表的记录，  
-从被驱动表中根据 v.vend_id = p.vend_id 条件筛选，然后组合成一个新表，这里正好一一对应  
-      
-内联接的 ON 子句和 WHERE 子句作用相同，ON 子句和外联结的 ON 子句效果不同  
-内联接对于被驱动表不符合 ON 子句过滤的，驱动表对应的记录不显示在结果集  
-      
-### 自联接  
-- 自己和自己联接，一个表起两个别名  
-      
-如有下面需求：  
-```sql  
-MySQL root@(none):db0> SELECT prod_id,prod_name FROM products  
-                    -> WHERE vend_id = (  
-                    -> SELECT vend_id FROM products WHERE prod_id=1);  
-+---------+-----------+  
-| prod_id | prod_name |  
-+---------+-----------+  
-| 1       | a         |  
-| 2       | b         |  
-+---------+-----------+  
-2 rows in set  
-Time: 0.011s  
-```  
-筛选某个商品的厂商生产的全部商品  
-      
-相同的效果可以用自联接的方式实现：  
-```sql  
-MySQL root@(none):db0> SELECT p1.prod_id, p1.prod_name FROM  
-                    -> products AS p1, products AS p2  
-                    -> WHERE p1.vend_id = p2.vend_id  
-                    -> AND p2.prod_id=1;  
-+---------+-----------+  
-| prod_id | prod_name |  
-+---------+-----------+  
-| 1       | a         |  
-| 2       | b         |  
-+---------+-----------+  
-2 rows in set  
-Time: 0.009s  
-```  
-      
-### 外联接  
-> [第11章 两个表的亲密接触-连接的原理](https://relph1119.github.io/mysql-learning-notes/#/mysql/11-两个表的亲密接触-连接的原理)  
-      
-左外联接则左侧的表为驱动表  
-右外联接则右侧的表为驱动表  
-      
-过滤条件分为两种：  
-- WHERE 子句过滤  
-普通的过滤条件，如果被驱动表中无 WHERE 子句过滤条件的记录，则驱动表的记录也不显示在结果集  
-      
-- ON 子句过滤  
-被驱动表中无法找到匹配 ON 子句过滤条件的记录，驱动表的记录仍显示在结果集中，该记录对应的被驱动表的字段为 NULL  
-      
-      
-语法：  
-```sql  
-SELECT * FROM t1 LEFT|RIGHT [OUTER] JOIN t2 ON 联接条件 [WHERE 普通过滤条件];  
-```  
-      
-      
-初始表：  
-```sql  
-MySQL root@(none):db0> SELECT * FROM products;  
-+---------+---------+-----------+------------+-----------+  
-| prod_id | vend_id | prod_name | prod_price | prod_desc |  
-+---------+---------+-----------+------------+-----------+  
-| 1       | 34      | a         | 23.00      |           |  
-| 2       | 34      | b         | 45.00      |           |  
-| 3       | 2       | c         | 21.00      |           |  
-| 4       | 2       | d         | 44.00      |           |  
-| 5       | 1       | e         | 22.00      |           |  
-+---------+---------+-----------+------------+-----------+  
-      
-5 rows in set  
-Time: 0.008s  
-MySQL root@(none):db0> SELECT * FROM vendors;  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-| vend_id | vend_name | vend_address | vend_city | vend_state | vend_zip | vend_country |  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-| 1       | v1        | <null>       | <null>    | <null>     | <null>   | <null>       |  
-| 2       | v2        | <null>       | <null>    | <null>     | <null>   | <null>       |  
-| 3       | v3        | <null>       | <null>    | <null>     | <null>   | <null>       |  
-| 34      | v34       | <null>       | <null>    | <null>     | <null>   | <null>       |  
-+---------+-----------+--------------+-----------+------------+----------+--------------+  
-      
-4 rows in set  
-Time: 0.010s  
-```  
-      
-#### LEFT OUTER JOIN 左外联接  
-```sql  
-MySQL root@(none):db0> select p.vend_id, p.prod_name from  
-                    -> products as p left outer join vendors as v  
-                    -> on p.vend_id = v.vend_id;  
-+---------+-----------+  
-| vend_id | prod_name |  
-+---------+-----------+  
-| 34      | a         |  
-| 34      | b         |  
-| 2       | c         |  
-| 2       | d         |  
-| 1       | e         |  
-+---------+-----------+  
-5 rows in set  
-Time: 0.009s  
-```  
-      
-#### RIGHT OUTER JOIN 右外联接  
-      
-```sql  
-MySQL root@(none):db0> select v.vend_id, v.vend_name from  
-                    -> products as p right outer join vendors as v  
-                    -> on p.vend_id = v.vend_id;  
-+---------+-----------+  
-| vend_id | vend_name |  
-+---------+-----------+  
-| 1       | v1        |  
-| 2       | v2        |  
-| 2       | v2        |  
-| 3       | v3        |  
-| 34      | v34       |  
-| 34      | v34       |  
-+---------+-----------+  
-6 rows in set  
-Time: 0.008s  
-```  
-      
-#### FULL OUTER JOIN 完全外联接  
-- MySQL 不支持  
-      
+
+有两张表：`A表`、`B表`，通过关联字段把两张表的数据拼在一起。
+虚拟结果集：select ... join ...，查询完展示结果，内存里临时拼接，磁盘没有新表。
+
+测试数据：
+```sql
+create table t1 (
+    id int,
+    name varchar(20)
+);
+create table t2 (
+    id int,
+    score int
+);
+
+insert into t1 values
+(1,'张三'),
+(2,'李四'),
+(3,'王五');
+
+insert into t2 values
+(1,90),
+(2,85),
+(4,77);
+```
+t1
+| id  | name |
+| --- | ---- |
+| 1   | 张三 |
+| 2   | 李四 |
+| 3   | 王五 |
+
+t2
+| id  | score |
+| --- | ----- |
+| 1   | 90    |
+| 2   | 85    |
+| 4   | 77    |
+
+关联条件：`t1.id = t2.id`
+
+### 内连接 INNER JOIN
+**只保留两张表关联条件相等的行，两边都有才出现**
+```sql
+select * from t1 inner join t2 on t1.id = t2.id;
+```
+结果：
+| t1.id | name | t2.id | score |
+| ----- | ---- | ----- | ----- |
+| 1     | 张三 | 1     | 90    |
+| 2     | 李四 | 2     | 85    |
+
+> 王五(t1.id=3) t2没有匹配，丢弃；77分(t2.id=4) t1没有匹配，丢弃。
+> inner join 可以简写为 join
+
+### 左外连接 LEFT JOIN / LEFT OUTER JOIN
+**以左边表(t1)为全部基准，左表所有行全部保留；右边匹配不到填NULL**
+```sql
+select * from t1 left join t2 on t1.id = t2.id;
+```
+结果
+| t1.id | name | t2.id | score |
+| ----- | ---- | ----- | ----- |
+| 1     | 张三 | 1     | 90    |
+| 2     | 李四 | 2     | 85    |
+| 3     | 王五 | NULL  | NULL  |
+
+> 左边t1的王五一定出来，t2没有对应数据，t2字段全部NULL。
+
+> ⚠️：where条件和on条件不一样
+> on：连接的时候过滤；where：连接完成之后再过滤。
+
+### 右外连接 RIGHT JOIN / RIGHT OUTER JOIN
+**以右边表(t2)为基准，右表全部行保留，左边匹配不到填NULL**
+```sql
+select * from t1 right join t2 on t1.id = t2.id;
+```
+结果
+| t1.id | name | t2.id | score |
+| ----- | ---- | ----- | ----- |
+| 1     | 张三 | 1     | 90    |
+| 2     | 李四 | 2     | 85    |
+| NULL  | NULL | 4     | 77    |
+
+> t2里面id=4这条保留，左边t1没有数据，t1字段NULL。
+
+> 小技巧：右连接很少写，可以改成左连接，调换两张表位置效果一样。
+
+### 全外连接 FULL JOIN
+> ⚠️MySQL **不支持 FULL JOIN**！
+> Oracle支持，MySQL没有语法。
+> 想要实现全外：`left join union right join`
+
+### 交叉连接 CROSS JOIN（笛卡尔积）
+不加on条件，左表每一行和右表每一行全部两两组合。
+t13行，t23行，结果9行。一般业务尽量避免。
+```sql
+select * from t1 cross join t2;
+```
+
+### 自连接 self‑join
+**自连接：一张表自己和自己做 JOIN**
+同一张表，取两个别名，把它当成两张完全独立的表来关联查询。
+
+> 核心：物理只有1张表；逻辑上起两个别名 A、B，A join B。
+
+经典场景：员工‑上级关系
+```sql
+CREATE TABLE emp(
+    emp_id INT PRIMARY KEY AUTO_INCREMENT,
+    emp_name VARCHAR(20),
+    manager_id INT   -- 上级员工编号，引用本表emp_id
+);
+
+INSERT INTO emp(emp_name,manager_id) VALUES
+('张三',null),   -- 总经理，没有上级
+('李四',1),      -- 李四上级是1号张三
+('王五',1),      -- 王五上级是1号张三
+('赵六',2);      -- 赵六上级是2号李四
+```
+
+emp表原始数据：
+
+| emp_id | emp_name | manager_id |
+| ------ | -------- | ---------- |
+| 1      | 张三     | NULL       |
+| 2      | 李四     | 1          |
+| 3      | 王五     | 1          |
+| 4      | 赵六     | 2          |
+
+需求：查询每个员工名字，以及他**直接上级的名字**。
+> 上级名字不在别的表，就在本表；manager_id = 另一条记录的emp_id。
+
+把同一张表起两个别名：
+- e1：员工视角
+- e2：上级视角（同一张emp表）
+
+```sql
+SELECT 
+    e1.emp_id,
+    e1.emp_name AS 员工姓名,
+    e2.emp_name AS 上级姓名
+FROM emp e1
+LEFT JOIN emp e2 
+ON e1.manager_id = e2.emp_id;
+```
+
+### 查询结果
+| emp_id | 员工姓名 | 上级姓名 |
+| ------ | -------- | -------- |
+| 1      | 张三     | NULL     |
+| 2      | 李四     | 张三     |
+| 3      | 王五     | 张三     |
+| 4      | 赵六     | 李四     |
+
+> 张三是最高领导，manager_id为null，left‑join匹配不到上级，上级姓名为NULL。
+> 这里用**LEFT JOIN**，不要INNER JOIN；用内连接会把总经理张三直接过滤掉。
+
+1. 物理只有一张`emp`，`e1`和`e2`只是别名，数据库加载同一份表数据，逻辑当成两张表。
+2. 关联条件 `e1.manager_id = e2.emp_id`：本行的上级编号 = 另一行员工编号。
+3. 业务最常用于**树形/层级结构**：员工上下级、分类父子、地区省市。
+
+### on 和 where
+left join之后where过滤右表字段，把null行过滤掉，变成等价inner join
+错误示例：
+```sql
+-- ❗score is not null，王五那一行score=null被过滤掉，结果等同于内连接
+select * from t1 left join t2 on t1.id=t2.id where t2.score is not null;
+```
+> 如果要对右表条件过滤，条件写在`on`后面，不要写where。
+```sql
+-- ✅正确，连接的时候过滤t2，左表数据依然全部保留
+select * from t1 left join t2 on t1.id=t2.id and t2.score>80;
+```
+
+- `on`：**表连接阶段**做匹配，控制两张表怎么拼
+- `where`：两张表已经拼接出完整结果集，**再过滤最终结果**
+
+学生表 left join 成绩表：查询所有学生，有成绩显示成绩，没成绩显示null。
+```sql
+select t1.name,t2.score from t1 left join t2 on t1.id = t2.id;
+```
+
 ### UNION 组合查询  
 两张表纵向合并  
 只是展示结果，不真的处理数据库的表  
@@ -2927,34 +3033,80 @@ UNION ALL 不去重
    - 字段类型不同也能合并不出错，但逻辑没有意义  
 - 自己和自己合并  
 默认不会显示两份，去重  
-      
-```sql  
-MySQL root@(none):db0> SELECT vend_id, prod_id, prod_price  
-                    -> FROM products  
-                    -> WHERE prod_price <= 30  
-                    -> UNION  
-                    -> SELECT vend_id, prod_id, prod_price  
-                    -> FROM products WHERE vend_id IN (1,2,34);  
-+---------+---------+------------+  
-| vend_id | prod_id | prod_price |  
-+---------+---------+------------+  
-| 34      | 1       | 23.00      |  
-| 2       | 3       | 21.00      |  
-| 1       | 5       | 22.00      |  
-| 34      | 2       | 45.00      |  
-| 2       | 4       | 44.00      |  
-+---------+---------+------------+  
-5 rows in set  
-Time: 0.010s  
-```  
-      
+
+> JOIN 是**横向拼接（列变多）**；
+> UNION 是**纵向堆叠（行变多）**。
+
+原始表：
+t1
+| id  | name |
+| --- | ---- |
+| 1   | 张三 |
+| 2   | 李四 |
+| 3   | 王五 |
+
+t2
+| id  | score |
+| --- | ----- |
+| 1   | 90    |
+| 2   | 85    |
+| 4   | 77    |
+
+> ⚠️UNION硬性规则：
+1. 前后两个select**字段数量必须一样**
+2. 对应位置字段类型尽量兼容
+3. 最终结果列名，**取第一条select的字段名**
+
+把两个查询结果合并，**自动删除完全一模一样的重复行**，内部会排序去重，消耗性能。
+```sql
+-- 查询t1的id
+SELECT id FROM t1
+UNION
+-- 查询t2的id
+SELECT id FROM t2;
+```
+结果：
+| id  |
+| --- |
+| 1   |
+| 2   |
+| 3   |
+| 4   |
+
+> id=1、id=2两边都存在，union自动合并只保留一份。
+
+#### UNION ALL（不去重，直接全部堆叠，速度快）
+直接把所有行摞在一起，**不做去重、不排序**，性能更高，业务优先选这个。
+```sql
+SELECT id FROM t1
+UNION ALL
+SELECT id FROM t2;
+```
+结果：
+| id  |
+| --- |
+| 1   |
+| 2   |
+| 3   |
+| 1   |
+| 2   |
+| 4   |
+
+> 1、2重复出现，全部保留。
+
+| 语法      | 作用                    | 性能             |
+| --------- | ----------------------- | ---------------- |
+| UNION     | 合并+自动去除完全重复行 | 慢，需要排序比对 |
+| UNION ALL | 单纯纵向堆叠，不去重    | 快，生产优先使用 |
+
+> 只有确实需要去重的时候才用 UNION；绝大多数场景推荐 `UNION ALL`。
+
 ## 全文搜索  
 并非所有的引擎都支持全文搜索  
 MyISAM 支持，InnoDB 不支持  
       
 创建表时指定一个字段为 FULLTEXT  
 搜索时用 Match() 和 Against()  
-      
       
 # VIEW 视图  
 - 虚拟表，视图只包含使用时动态检索数据的查询  
@@ -2970,56 +3122,86 @@ MyISAM 支持，InnoDB 不支持
 - 视图不包含数据，每次使用视图时，都必须处理查询执行时所需的所有检索  
 - 视图不能索引，不能有关联的触发器或默认值  
 - 视图的查询和普通的表相同  
-      
-## 创建视图  
-```sql  
-MySQL root@(none):db0> CREATE VIEW v1 AS SELECT prod_id, prod_name, prod_price  
-                    -> FROM products;  
-Query OK, 0 rows affected  
-Time: 0.007s  
-```  
-      
-## 查询视图  
-```sql  
-MySQL root@(none):db0> SELECT * FROM v1;  
-+---------+-----------+------------+  
-| prod_id | prod_name | prod_price |  
-+---------+-----------+------------+  
-| 1       | a         | 23.00      |  
-| 2       | b         | 45.00      |  
-| 3       | c         | 21.00      |  
-| 4       | d         | 44.00      |  
-| 5       | e         | 22.00      |  
-+---------+-----------+------------+  
-5 rows in set  
-Time: 0.009s  
-```  
-      
-## 查看创建视图语句  
-```sql  
-MySQL root@(none):db0> SHOW CREATE VIEW v1\G;  
-```  
-      
-## 查看是视图还是表  
-```sql  
-MySQL root@(none):db0> show table status like 'v1'\G;  
-```  
-      
-## 更新视图  
-```bash  
-MySQL root@(none):db0> ALTER VIEW v1 AS SELECT prod_id, prod_name, prod_price  
-                    -> FROM products;  
-You're about to run a destructive command.  
-Do you want to proceed? (y/n): Y  
-Your call!  
-Query OK, 0 rows affected  
-Time: 0.007s  
-```  
-## 删除视图  
-```sql  
-MySQL root@(none):db0> DROP VIEW v1;  
-```  
-      
+
+**视图 view：是一条预保存好的 SELECT 查询语句，本身不存真实数据。**
+视图不是物理表，磁盘上只存SQL逻辑；访问视图时，现场执行里面的select得到结果。
+
+沿用之前 t1、t2 测试表
+t1(id,name)；t2(id,score)
+
+## 创建视图
+```sql
+CREATE VIEW v_stu_score AS
+SELECT t1.id, t1.name, t2.score
+FROM t1 LEFT JOIN t2 ON t1.id = t2.id;
+```
+`v_stu_score` 就是视图名字。
+
+使用视图，像查表一样：
+```sql
+SELECT * FROM v_stu_score;
+```
+执行效果等价直接跑那一段left‑join SQL。
+> ⚠️底层没有复制保存一份数据；每次select视图，都会实时去查原始t1、t2表再计算。
+
+## 查看、删除视图
+```sql
+-- 查看视图定义SQL
+SHOW CREATE VIEW v_stu_score;
+
+-- 删除视图
+DROP VIEW v_stu_score;
+```
+
+## 修改视图
+```sql
+ALTER VIEW v_stu_score AS
+SELECT t1.id,t1.name,IFNULL(t2.score,0) score
+FROM t1 LEFT JOIN t2 ON t1.id = t2.id;
+```
+
+## 视图能不能增删改（insert / update / delete）
+分两种：**可更新视图、不可更新视图**
+
+✅简单视图（单表查询，无join、无聚合sum/count、无distinct）可以update、delete。
+```sql
+--单表简单视图示例
+CREATE VIEW v_t1 AS SELECT id,name FROM t1;
+UPDATE v_t1 SET name='小王' WHERE id=3;
+--实际修改的是原始物理表t1的数据
+```
+
+❌**多表join、union、聚合函数、distinct、group by 的视图不能update/insert/delete**
+> 我们刚才的 `v_stu_score` 是left join多表视图，只能select查询，不能修改。
+
+> 重点：修改视图，本质修改**底层原始表**；视图只是“窗口”，没有自己的数据副本。
+
+## 视图作用
+1. **简化复杂SQL**
+把经常写的join、多表查询封装成视图，业务直接`select * from 视图`，不用每次复制一大段SQL。
+
+2. **权限控制**
+不给用户访问原始完整表权限，只开放视图，只暴露部分字段。
+例：员工原始表有工资，视图去掉工资字段，普通人员只能查视图看不到敏感字段。
+
+3. **逻辑统一**
+多处业务要用同一套查询逻辑，统一写在视图，后续逻辑调整只改视图一处，不用改所有业务代码。
+
+## 视图缺点
+1. **不存储数据，实时计算**。底层大表、复杂join，查询视图性能不会变快，**不会加速！**
+很多人误以为视图提高速度，是误区。
+2. 底层原始表结构修改（drop字段、改字段类型），视图会失效。
+3. 多表视图不能DML（insert/update/delete）。
+4. 视图只是保存select语句，不是物理表；`show tables`也会把视图显示出来，容易混淆。
+
+## 视图 vs 物理表 vs 临时表 vs create table … as select
+| 对象                           | 是否存真实数据                   | 本质                                       |
+| ------------------------------ | -------------------------------- | ------------------------------------------ |
+| VIEW视图                       | ❌不存数据，存SQL语句             | 虚拟查询窗口，每次实时计算底层表           |
+| 普通物理表                     | ✅磁盘保存真实数据                | 真正存储行数据                             |
+| create table xxx as select ... | ✅生成实实在在物理表              | 把查询结果落地固化；源表更新，新表数据不变 |
+| 临时表temporary table          | ✅会话内存/磁盘，断开连接自动删除 | 临时存放中间结果                           |
+
 # 变量  
 > [第2章 MySQL的调控按钮-启动选项和系统变量](https://relph1119.github.io/mysql-learning-notes/#/mysql/02-MySQL的调控按钮-启动选项和系统变量)  
       
