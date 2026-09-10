@@ -3217,14 +3217,84 @@ UPDATE v_t1 SET name='小王' WHERE id=3;
    - 局部变量  
    在函数或存储过程中有效，用 `DECLARE` 声明，声明后直接写变量名引用  
       
-      
+1. **系统内置变量**：MySQL本身自带，分「系统变量」、「状态变量」，`@@`访问
+    - `GLOBAL`：全局，对**所有会话**生效
+    - `SESSION`：会话级，只对**当前这一个数据库连接**生效（简写`@@session.xxx` / `@@xxx`默认session）
+2. **用户自定义变量**
+    - 用户会话变量：`@变量名`，**当前连接会话有效**，断开连接自动消失，不需要declare
+    - 局部变量：`DECLARE`声明，**只能在存储过程/函数内部**使用，出了过程就无效
+
+- `@@` → MySQL系统自带变量
+- `@` → 用户会话变量（会话变量）
+- 不加符号 → `DECLARE`局部变量（只在过程/函数体内）
+
+## 用户自定义变量：会话变量 @xxx
+✅不需要提前声明，直接赋值；**只在当前数据库连接有效**；关闭连接变量直接消失。
+
+两种赋值方式：`SET` 或者 `SELECT ... INTO`
+
+```sql
+-- 方式1 set赋值
+SET @a = 100;
+SET @b := '张三';  -- := 赋值符号，select里面不能用=赋值
+
+-- 查看变量
+SELECT @a,@b;
+
+-- 方式2 select into赋值，把查询结果存入变量
+SELECT id,name INTO @tid,@tname FROM t1 WHERE id=1;
+
+SELECT @tid,@tname; -- @tid=1 , @tname='张三'
+```
+
+⚠️关键点：
+1. 换一个mysql客户端窗口（新连接），`select @a`得到`NULL`，会话隔离。
+2. `=`在select语句是比较判断，**赋值要用`:=`**
+```sql
+SELECT @num := 200; -- 正确赋值
+SELECT @num = 200;  -- 这是比较，返回1(true)或0(false)，不是赋值
+```
+
+## 用户自定义变量：局部变量 DECLARE
+> ⚠️**DECLARE只能写在存储过程 / 函数里面，不能直接在普通外面SQL执行！**
+> 作用域仅限begin…end代码块内部，离开就失效，**不加@、@@**
+
+示例：创建简单存储过程
+```sql
+DELIMITER //  -- 修改语句结束符为//，防止;提前结束过程定义
+CREATE PROCEDURE test_var()
+BEGIN
+    -- declare声明局部变量，必须写在begin后面最开头
+    DECLARE v_age INT DEFAULT 18;
+    DECLARE v_name VARCHAR(20);
+    
+    SET v_name = '李四';
+    
+    SELECT v_age, v_name; -- 使用局部变量，直接写名字，没有@符号
+END //
+DELIMITER ; -- 改回分号
+
+-- 调用存储过程
+CALL test_var();
+```
+
+直接在外面执行 `DECLARE v_age int;` → **语法报错！DECLARE不能独立使用**。
+
+## 作用域对比总结
+| 变量类型     | 前缀符号                  | 声明方式                       | 生效范围                   |
+| ------------ | ------------------------- | ------------------------------ | -------------------------- |
+| 系统全局变量 | `@@GLOBAL.xxx`            | mysql内置配置                  | 所有会话，新连接生效       |
+| 系统会话变量 | `@@SESSION.xxx` / `@@xxx` | mysql内置配置                  | 仅当前数据库连接           |
+| 用户会话变量 | `@xxx`                    | set / select into，无需declare | **当前会话连接**，断开丢失 |
+| 局部变量     | 无符号                    | `DECLARE`，只能在过程/函数内   | 仅BEGIN‑END代码块内部      |
+
 ## 服务器选项，系统变量和状态变量查看  
 > [第2章 MySQL的调控按钮-启动选项和系统变量](https://relph1119.github.io/mysql-learning-notes/#/mysql/02-MySQL的调控按钮-启动选项和系统变量)  
 > [5.1.4 Server Option, System Variable, and Status Variable Reference](https://dev.mysql.com/doc/refman/8.0/en/server-option-variable-reference.html)  
       
 能写在命令行中的变量，能写在配置文件中的选项，系统变量  
       
-## 系统变量  
+## 系统内置变量 @@
 > [5.1.5 Server System Variable Reference](https://dev.mysql.com/doc/refman/8.0/en/server-system-variable-reference.html)  
       
 系统变量是MySQL服务器的配置参数，用于控制服务器的行为和性能。  
@@ -3235,13 +3305,28 @@ UPDATE v_t1 SET name='小王' WHERE id=3;
 - query_cache_size: 控制查询缓存的大小。  
 - tmp_table_size: 指定临时表的最大大小。  
 - innodb_log_file_size: 指定InnoDB日志文件的大小。  
+
+`@@GLOBAL.` 全局；`@@SESSION.`会话
+
+```sql
+-- 查看全局最大连接数
+SELECT @@GLOBAL.max_connections;
+
+-- 查看当前会话sql模式
+SELECT @@SESSION.sql_mode;
+-- 省略session，默认取session
+SELECT @@sql_mode;
+```
+
+> 注意：修改`GLOBAL`不会影响**已经建立好的旧连接**，只对新建立连接生效。
+> session只改变当前这一个窗口，别的客户端不受影响。
       
 ### 作用范围  
 大多数变量有下面两种作用范围  
 - GLOBAL  
 - SESSION  
       
-#### 查看全局范围的变量  
+### 查看全局范围的变量  
 ```sql  
 MySQL root@(none):db0> SHOW GLOBAL VARIABLES LIKE 'default%';  
 +-------------------------------+-----------------------+  
@@ -3259,8 +3344,7 @@ MySQL root@(none):db0> SHOW GLOBAL VARIABLES LIKE 'default%';
 Time: 0.045s  
 ```  
       
-      
-#### 查看 session 级别的变量  
+### 查看 session 级别的变量  
 - 查看时不指定作用范围，则默认查看 SESSION 级别的变量  
 ```sql  
 MySQL root@(none):db0> SHOW SESSION VARIABLES LIKE 'default%';  
@@ -3279,7 +3363,7 @@ MySQL root@(none):db0> SHOW SESSION VARIABLES LIKE 'default%';
 Time: 0.014s  
 ```  
       
-#### 设置变量值  
+### 设置变量值  
 ```sql  
 MySQL root@(none):db0> SET SESSION default_storage_engine='MyISAM';  
 Query OK, 0 rows affected  
@@ -3317,6 +3401,13 @@ Time: 0.009s
 - Handler_read_first: 从索引中读取的次数。  
 - Com_commit: 执行的COMMIT语句次数。  
       
+状态变量语法 `SHOW STATUS;`，也可以`@@`读取
+```sql
+SHOW SESSION STATUS LIKE 'Com_select';
+SELECT @@session.Com_select;
+```
+`Com_select`统计当前会话执行了多少次select查询。
+
 ### 查看状态变量  
 ```sql  
 MySQL root@(none):db0> SHOW GLOBAL STATUS LIKE 'thread%';  
@@ -3599,7 +3690,6 @@ Triggers in different schemas can have the same name.
 ## 删除触发器  
 - DROP TRIGGE trigger_name  
       
-      
 # Event 事件  
 > [25.4.1 Event Scheduler Overview](https://dev.mysql.com/doc/refman/8.0/en/events-overview.html)  
       
@@ -3639,13 +3729,11 @@ event_scheduler=on
 ## 创建事件  
 > [13.1.13 CREATE EVENT Statement](https://dev.mysql.com/doc/refman/8.0/en/create-event.html)  
       
-      
 ## 查看事件  
 - `SHOW EVENTS\G;`  
       
 ## 删除事件  
 - `DROP EVENT event_name;`  
-      
       
 # 用户管理  
 - mysql 账号和系统的账号不同  
@@ -3852,7 +3940,6 @@ MySQL root@(none):db0> FLUSH PRIVILEGES;
 MySQL root@(none):db0> REVOKE ALL PRIVILEGES ON customers.* FROM 'root'@'localhost';  
 ```  
       
-      
 # 安全操作  
 ## sql_safe_updates  
 > [update 没加索引会锁全表？](https://xiaolincoding.com/mysql/lock/update_index.html#为什么会发生这种的事故)  
@@ -3863,7 +3950,6 @@ MySQL root@(none):db0> REVOKE ALL PRIVILEGES ON customers.* FROM 'root'@'localho
 ## Navicat  
 ## DBeaver  
 - 免费  
-      
       
 # 数据库维护  
 > [13.7.3 Table Maintenance Statements](https://dev.mysql.com/doc/refman/8.0/en/table-maintenance-statements.html)  
@@ -3955,7 +4041,6 @@ Time: 0.025s
 有空闲连接最大时长，超过时长也会自动断开  
 - 客户端主动重置连接  
       
-      
 ## 查询缓存  
 对更新较频繁的表，查询缓冲命中率较低  
 MySQL 8.0 后不用此功能  
@@ -3992,10 +4077,52 @@ MySQL 8.0 后不用此功能
 > [Chapter 16 Alternative Storage Engines](https://docs.oracle.com/cd/E17952_01/mysql-8.0-en/storage-engines.html)  
 > [第1章 装作自己是个小白-重新认识MySQL](https://relph1119.github.io/mysql-learning-notes/#/mysql/01-装作自己是个小白-重新认识MySQL)  
       
-      
 - 存储引擎是对数据的一种存储模块，如何存储数据以及如何查询提取出数据  
 - 不同的表可以用不同的存储引擎，不同存储引擎管理的表具体的存储结构和存储算法可能不同  
-      
+
+**存储引擎就是一套软件代码模块，MySQL插件式组件，是C语言写的一堆源码。**
+
+MySQL整体程序分成两大部分代码：
+1. **Server层代码**：公共部分，处理SQL解析、语法检查、优化器、权限、视图、存储过程、binlog。这部分代码固定，所有表共用。
+2. **存储引擎代码（插件）**：独立的一套代码库。
+    - InnoDB：一套独立源码
+    - MyISAM：另一套独立源码
+
+> MySQL‑server收到 `update t1 set name='xxx'`
+> Server层做完语法解析，**调用存储引擎提供的接口函数**，由存储引擎的代码真正完成：写磁盘、加锁、事务、undo/redo日志。
+
+## 插件
+在源码层面定义了一套标准接口（handler接口）：
+```
+open() 打开表
+read_row() 读一行
+write_row() 插入一行
+update_row() 更新一行
+delete_row() 删除一行
+...
+```
+- InnoDB代码实现这整套接口；
+- MyISAM也实现同一套接口；
+
+Server层只调用接口，**不关心底层内部怎么实现**。
+> 就像同一个电源插座（统一接口），可以插不同电器（不同存储引擎）。插座不知道电器内部电路，只调用标准接口。
+
+1. ❌存储引擎不是配置，不是开关，是**代码实现**
+`engine=InnoDB` 只是告诉MySQL：这张表使用InnoDB那套代码来处理读写。
+
+2. ❌存储引擎不是磁盘上的数据文件
+`.ibd`只是存储引擎**产生的数据文件**；存储引擎本身是运行在MySQL进程里面的代码逻辑。
+> 类比：Word软件（代码=存储引擎）；docx文件是它生成的数据文件。
+
+3. ✅InnoDB代码跑在 mysqld 进程内部，**不是独立程序**，没有单独进程。是mysqld内部的子模块。
+
+> 存储引擎是MySQL内部一套插件化软件代码，实现统一handler接口；Server层把读写请求下发给存储引擎，由这套代码真正负责数据组织、锁、事务、磁盘IO。InnoDB、MyISAM是两套不同实现的代码模块，运行在mysqld进程内部。
+
+## 注意
+1. **存储引擎：C代码模块（软件逻辑）**
+2. **表：逻辑对象，建表指定使用哪一套引擎代码**
+3. **ibd/myd/myi：存储引擎代码输出保存到磁盘的数据文件**
+
 ## 查看服务器支持的存储引擎  
 `SHOW ENGINES;` 查看支持的存储引擎，默认（DEFAULT）的为 `InnoDB`  
       
@@ -4028,7 +4155,6 @@ Time: 0.070s
 - 处理数据的过程发生在内存，需要将磁盘数据加载到内存，写数据后再将内存数据写回磁盘  
 - InnoDB 以页作为磁盘和内存之间交互的基本单位，一页的大小一般为 16KB  
 - InnoDB 的页有多种类型，存放表中记录的页为索引页  
-      
       
 ### InnoDB 行格式  
 - 以行为单位插入数据，一行也称一条记录，该记录存储在磁盘上的方式叫行格式  
@@ -4171,8 +4297,24 @@ Time: 0.045s
 - table space，也称文件空间（file space）  
 - 抽象概念，可以对应文件系统上一个或多个文件，mysql 8.0 用独立表空间  
   每个表对应一个独立的表空间，即一个独立的文件来存储数据，如 test.ibd  
-      
-### 区  
+  ibd文件就是单表表空间，里面包含这张表所有的segment。
+
+> 层级从大到小：**表空间(tablespace) → 段(segment) → 区(extent) → 页(page)**
+> page 是InnoDB最小IO单元；extent是连续page的集合；segment是多个extent的集合。
+
+## 页 Page（最小单位）
+默认 `16KB`，InnoDB读写磁盘最小单位。
+一行行数据、索引记录，都放在page里面。
+
+## 区 Extent（区，也叫盘区）
+**1个区 = 连续固定64个page**
+16KB × 64 = **1MB**。
+> 一次分配1MB连续磁盘空间，减少碎片。
+
+规则：
+- 当段的数据很小（小于32个page）：**不分配完整extent**，直接从空闲区里零散拿单独page（碎片页）。
+- 当段占用空间 ≥32 page：开始**按整个extent来分配**，一次性拿64个连续page。
+
 - extent  
 - 对于 16KB 的页，连续的64个页为一个区，即 1M 大小，每 256 个区为一组  
 - 当数据记录很多时，如果以页为单位申请索引空间时，可能相邻的页物理位置不连续  
@@ -4188,13 +4330,45 @@ Time: 0.045s
 - FSEG  
 附属于某个段的区  
       
-### 段  
+## 段 Segment
+**段 = 若干个extent + 零散page的集合**
+一张InnoDB表，会有2个核心段：
+1. **聚簇索引段**：存放主键索引+行数据
+2. **二级索引段**：存放普通索引
+
+> 每一个索引，对应一个独立的segment。
+> 一张表有3个索引，就有3个segment。
+
+段的作用：管理属于这个索引的所有extent，记录哪些区已经使用、哪些空闲。
+段本身不限制大小，可以不断新增extent，持续扩容。
+
 - segment  
 - 叶子节点和非叶子节点进行区分，将叶子节点的区的集合为一个段空间，非叶子节点区的集合为另一个段  
 - 有些碎片区，可能部分页在一个段，部分页在另一个段  
 - 还有一些特殊数据的段，如回滚段等  
-      
-      
+
+## 完整数据流示例
+新建一张表，建立主键索引：
+1. 刚开始插入少量数据，聚簇索引segment空间不足，**零散分配单独page**，不拿整个extent。
+2. 数据持续增加，占用超过32个page。
+3. segment向表空间申请**完整extent（64page，1MB）**，一次性分配连续1MB空间。
+4. 继续增长，不断新增extent，全部归属于这个聚簇索引segment。
+5. 再新建普通索引，会**新建另外一个segment**，单独分配extent。
+
+总结：
+1. Page：16KB，最小IO单元。
+2. Extent：64个连续page=1MB，分配空间的单位。
+3. Segment：一个索引对应一个段，管理一堆extent。
+4. Tablespace：ibd文件，容纳所有segment。
+
+> 一句话记忆：
+> **页是最小读写；区是连续64页；段是一个索引，管理多个区；表空间包含所有段。**
+
+注意：
+1. 删除数据，page空闲了，**extent不会立刻归还操作系统**，只是标记在表空间内空闲，留给后续本表复用。ibd文件不会自动缩小。
+2. 段不是按表划分，**按索引划分**。
+3. 零散page（小于32page阶段）不属于任何extent。
+
 ## InnoDB 的 Buffer Pool  
 > [第18章 调节磁盘和CPU的矛盾-InnoDB的Buffer Pool](https://relph1119.github.io/mysql-learning-notes/#/mysql/18-调节磁盘和CPU的矛盾-InnoDB的Buffer%20Pool)  
       
