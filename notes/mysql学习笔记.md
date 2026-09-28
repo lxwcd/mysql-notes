@@ -9,6 +9,7 @@ MySQL 学习笔记
 > 梳理知识：[图解MySQL介绍](https://xiaolincoding.com/mysql/)  
 > 极客时间学习：[MySQL 实战 45 讲](https://time.geekbang.org/column/intro/100020801?tab=catalog)  
 > 进阶书：MySQL 技术内幕 InnoDB 存储引擎  
+> [Mysql 视频](https://www.bilibili.com/video/BV1iq4y1u7vj/?spm_id_from=333.788.videopod.sections&vd_source=a99dfd145a3e6aa8000930c149d4bf58&p=23) 
       
       
 电子书：[百度网盘](https://pan.baidu.com/s/10H6WjGEsOjaKqDRH3ekndA?pwd=vsio)  
@@ -2531,6 +2532,14 @@ MySQL root@(none):db0> SELECT cust_id,cust_name FROM customers WHERE cust_id < 1
 1 row in set  
 Time: 0.019s  
 ```  
+
+或者加偏移量，选择特定范围
+```sql
+SELECT * FROM user LIMIT 5,3;
+```
+跳过 5 条，取 3 条
+第一个 offset 从 0 开始
+注意不同 mysql 版本语法可能有区别
       
 #### 使用完全限定的表名  
 ```sql  
@@ -4361,7 +4370,6 @@ Time: 0.045s
 3. Segment：一个索引对应一个段，管理一堆extent。
 4. Tablespace：ibd文件，容纳所有segment。
 
-> 一句话记忆：
 > **页是最小读写；区是连续64页；段是一个索引，管理多个区；表空间包含所有段。**
 
 注意：
@@ -4432,6 +4440,7 @@ Time: 0.045s
 # B+ 树索引  
 > [第6章 快速查询的秘籍-B+树索引](https://relph1119.github.io/mysql-learning-notes/#/mysql/06-快速查询的秘籍-B+树索引)  
 > [什么是索引？](https://xiaolincoding.com/mysql/index/index_interview.html#什么是索引)  
+> [B+ 树](https://www.bilibili.com/video/BV14K421478y/?vd_source=a99dfd145a3e6aa8000930c149d4bf58&spm_id_from=333.788.videopod.sections) 
       
       
 没有索引查询方式：  
@@ -4621,7 +4630,6 @@ MySQL root@(none):db0> SHOW GLOBAL VARIABLES LIKE 'optimizer_trace';
 Time: 0.020s  
 ```  
       
-      
 # 事务  
 > [第19章 从猫爷被杀说起-事务简介](https://relph1119.github.io/mysql-learning-notes/#/mysql/19-从猫爷被杀说起-事务简介)  
       
@@ -4704,7 +4712,7 @@ redo log 保证
 在串行化隔离级别下，事务串行执行，每个事务依次进行读取和写入操作，避免了并发操作引起的幻读问题。  
       
 ### 幻读和不可重复读的区别  
-需要注意的是，幻读问题与不可重复读（Non-repeatable Read）是不同的。  
+幻读问题与不可重复读（Non-repeatable Read）是不同的。  
 不可重复读是在同一个事务内多次读取同一数据时得到不一致的结果，而幻读是在同一个事务内多次执行相同的查询时得到不同的结果集。  
 幻读主要涉及到新增的数据行，而不可重复读主要涉及到已存在数据的修改。  
       
@@ -4761,11 +4769,54 @@ mysql 默认设置
 ## MVCC 多版本并发控制  
 > [Read View 在 MVCC 里如何工作的？](https://xiaolincoding.com/mysql/transaction/mvcc.html#read-view-在-mvcc-里如何工作的)  
 > [第24章 一条记录的多幅面孔-事务的隔离级别与MVCC](https://relph1119.github.io/mysql-learning-notes/#/mysql/24-一条记录的多幅面孔-事务的隔离级别与MVCC)  
+> [mvcc 视频](https://www.bilibili.com/video/BV1iq4y1u7vj/?spm_id_from=333.788.videopod.sections&vd_source=a99dfd145a3e6aa8000930c149d4bf58&p=183) 
       
-      
-- MVCC 只在 read committed 和 repeatable read 两个隔离级别下工作  
+MVCC（多版本并发控制），InnoDB存储引擎特有机制。
+核心目的：**读写不互相阻塞，提升并发性能**。
+原理：修改数据时，保留数据旧版本（存于undo log）；查询时可以读取旧版本快照，不用加锁。
+> MVCC只解决快照读场景下的并发问题；脏写靠行锁解决。
+
+MVCC 只在 read committed 和 repeatable read 两个隔离级别下工作  
 在这两种隔离级别的事务执行 SELECT 操作时访问记录的版本链的过程  
-      
+
+### 快照读
+走MVCC、ReadView，不加锁
+普通`SELECT`语句：`select * from t where id=1;`
+- 读取undo版本链里符合可见性规则的快照数据
+- 不加锁，非阻塞读，依靠ReadView判断数据版本是否可见
+
+### 当前读
+不走ReadView，加锁，读最新版本
+`UPDATE`、`DELETE`、`SELECT ... FOR UPDATE`、`LOCK IN SHARE MODE`
+- 语句内部会先读取行的**最新版本**，并且加行锁
+- 不会去找undo里的旧版本，不使用ReadView
+> update不是直接写：内部隐含一次当前读 → 拿到最新行+加锁 → 修改，生成undo旧版本。
+
+### ReadView生成时机
+1. **RR（可重复读，MySQL默认隔离级别）**
+事务内**第一次快照读时生成1份ReadView**，整个事务全程复用这个ReadView。
+👉 事务内多次快照读，看到的数据一致，纯快照读不会发生不可重复读。
+
+2. **RC（读已提交）**
+**每一次快照SELECT，都会新建一份ReadView**。
+👉 每次查询都获取最新活跃事务列表，能读到其他事务刚刚提交的数据，会出现不可重复读。
+
+### 版本可见性判断规则
+拿到记录隐藏列`trx_id`（修改该行版本的事务id），和ReadView对比：
+1. `trx_id == creator_trx_id`：自己修改的数据 → ✅可见
+2. `trx_id < min_trx_id`：修改该版本的事务，在快照生成前已经提交 → ✅可见
+3. `trx_id >= max_trx_id`：快照生成之后才开启的事务 → ❌不可见
+4. `min_trx_id < trx_id < max_trx_id`：判断trx_id是否在m_ids
+    - 在m_ids：事务还活跃未提交 → ❌不可见
+    - 不在m_ids：事务已经提交 → ✅可见
+
+### 底层依赖：undo log版本链
+每行数据有2个隐藏列：
+- `DB_TRX_ID`：最近修改这条记录的事务ID
+- `DB_ROLL_PTR`：指针，指向undo log里该行的旧版本
+多次修改同一行，旧版本在undo log串联成**版本链**。
+快照读顺着版本链向前遍历，找到第一个满足可见性规则的版本返回。
+
 ### 版本链  
 InnoDB 存储引擎的聚簇索引记录的数据列中会加上一些隐藏列：  
 - row_id  
@@ -4776,7 +4827,6 @@ InnoDB 存储引擎的聚簇索引记录的数据列中会加上一些隐藏列�
 - roll_pointer  
 回滚指针，一定存在  
 对某条聚簇索引记录进行改动时，会将旧版本写到 Undo log 中，该隐藏列相当于一个指针，通过它找到旧版本数据  
-      
       
 对于回滚功能来说，事务提交后就没用了，占用的空间会被回收，但 undo log 还可以实现 MVCC  
       
@@ -4807,12 +4857,11 @@ ReadView 类似快照，查询语句只能读到生成 ReadView 之前已经提�
 - max_trx_id  
 生成 ReadView 时，系统应该分配给下一个事务的事务 id  
 该值不一定是 m_ids 中的最大值+1，有可能 m_ids 的最大值之后的一些事务提交了，则不在活跃列表  
-m_ids 中列表为当前系统中活跃的事务 id 列表，对于多个事务并发执行，可能一些 id 大的事务以及提交了  
+m_ids 中列表为当前系统中活跃的事务 id 列表，对于多个事务并发执行，可能一些 id 大的事务已经提交了  
       
 - creator_trx_id  
 生成该 ReadView 的事务的事务 id  
 如果一个事务未发生修改操作，如仅仅查询，则事务 id 默认为 0  
-      
       
 有了 ReadView 后，当某个事务要访问某条记录时，进行下面判断：  
 - 如果被访问的版本的 trx_id 与 ReadView 中的 creator_trx_id 相同，则表示当前事务访问的是自己修改的记录，  
@@ -4829,7 +4878,6 @@ m_ids 中列表为当前系统中活跃的事务 id 列表，对于多个事务�
   如果不在，则表示创建 ReadView 时生成该版本的事务已提交，因此该版本可以被访问  
       
 如果某个版本的数据对当前事务不可见，则顺着版本链找下一个版本的数据，再进行上述判断，直到找到可以访问的版本  
-      
       
 MySQL 中 Read committed 和 Repeatable read 隔离级别的一个很大的区别就是生成 ReadView 的时机不同  
 - Read committed  
@@ -4974,7 +5022,49 @@ autocommit=0
 ## 隐式提交  
 > [隐式提交](https://relph1119.github.io/mysql-learning-notes/#/mysql/19-从猫爷被杀说起-事务简介?id=隐式提交)  
       
-      
+**隐式提交：事务已经手动开启（BEGIN / START TRANSACTION），执行某些特定SQL时，MySQL会悄悄自动执行COMMIT，把当前事务提交。不需要手动写COMMIT。**
+⚠️ 区分：`autocommit=ON` 叫**自动提交**（每条DML单独成为一个事务）；隐式提交是**在一个已经打开的事务内部，被特定语句触发自动commit**。
+
+```sql
+BEGIN; -- 手动开启事务
+UPDATE account set money=100 where id=1; -- DML修改，事务未提交
+ALTER TABLE account ADD COLUMN test int; -- DDL语句！触发隐式提交
+```
+执行完`ALTER TABLE`这一行：**上面UPDATE已经被自动提交，永久生效，无法rollback**。
+哪怕后面写`ROLLBACK`，也回滚不掉刚才update的修改。
+
+### 触发隐式提交
+1. **DDL语句（最常见）**：`CREATE / ALTER / DROP` 库、表、索引、视图、存储过程等。
+> DDL本身不能事务回滚，执行DDL前，会先把当前打开的事务提交。
+
+2. 权限管理语句：`GRANT / REVOKE / CREATE USER / ALTER USER`
+
+3. 事务/锁相关语句：
+    - 事务还没结束，再次执行`BEGIN / START TRANSACTION`：**自动提交上一个事务，开启新事务**
+    - `LOCK TABLES / UNLOCK TABLES`
+
+4. 其他管理语句：`ANALYZE TABLE, OPTIMIZE TABLE`等
+
+### 区别自动提交 autocommit 
+1. **自动提交 autocommit=ON（MySQL默认）**
+    没有手动`BEGIN`的时候，**每一条DML语句单独是一个事务，执行完自动commit**。
+    ```sql
+    -- autocommit=ON，没有begin
+    update t set a=1; -- 执行完成自动提交，一条就是一个事务
+    ```
+2. **隐式提交**
+    已经手动`BEGIN`开启事务，事务处于未提交状态；执行**DDL等特殊语句**，自动commit当前事务。
+
+## 注意
+1. 事务代码块里，千万不要写`ALTER/CREATE/DROP`这类DDL；会把前面所有DML修改直接提交，破坏事务原子性。
+2. 事务中再次写`BEGIN`，会隐式提交上一个事务，很多人踩这个bug。
+3. 隐式提交一旦触发，undo log对应的修改就持久化，无法回滚。
+
+隐式提交：**事务已经开启，执行DDL等特定语句，MySQL自动帮你COMMIT，无需手动写提交语句。**
+自动提交：**没有开启事务，每条DML语句执行完毕自动提交。**
+
+一旦事务触发隐式提交，事务就结束了，对应的ReadView也失效；新的SQL会开启新事务。
+
 # 日志  
       
 ## 事务日志  
@@ -5081,7 +5171,6 @@ Time: 0.007s
 回滚操作只能在提交前，处于中间态的阶段，提交后不能回滚  
 - undo log 和普通的存放记录的索引页一样，也需要持久化，持久化机制也会通过 redo log  
       
-      
 区分 undo log 和 redo log  
 - 事务提交前崩溃，通过 undo log 回滚，保证原子性  
 - 事务提交后崩溃，通过 redo log 保证数据刷新的磁盘，保证持久性  
@@ -5093,8 +5182,106 @@ Time: 0.007s
 - 一个事务的执行过程可能涉及好几种操作，因此需要几个 undo 页面的链表  
 如 insert undo 链表，update undo 链表  
 - 不同事务执行过程中产生的 undo log 要写到不同的 undo 页面链表中  
-      
-      
+
+完整流程：
+1. 开启事务
+2. 修改数据前：**先写Undo日志**，保存修改前旧版本
+3. 修改内存中的Buffer Pool里的数据页
+4. 写Redo Log（prepare阶段）
+5. 事务提交，redo log commit标记写入
+6. 后台线程刷脏页到磁盘
+7. 事务提交后，undo日志等待purge线程回收
+
+> 崩溃恢复只用redo，undo是redo恢复完成之后，如果事务没提交，用undo来回滚。
+
+#### 核心作用
+1. **事务回滚（rollback）**
+事务执行一半失败/手动rollback，根据undo日志，把数据改回事务开始前的样子。
+> 注意：不是把磁盘旧页直接覆盖，而是逻辑上反向执行：
+> - insert → undo记录delete
+> - delete → undo记录insert
+> - update → undo记录修改前的旧值
+2. **MVCC多版本并发控制**
+行数据上会保存roll_pointer，指向undo日志里的历史版本，形成版本链。
+快照读的时候顺着版本链，找到符合ReadView的旧版本数据，实现RR隔离级别的快照读取。
+
+#### 逻辑日志
+> **Undo是逻辑日志，不是物理日志**
+> Redo：物理日志，记录「磁盘页修改了什么字节」，用来崩溃恢复，**重做提交的数据**
+> Undo：逻辑日志，记录「事务执行前的数据版本」，用来回滚+MVCC读快照，**撤销未提交的修改**
+
+- 物理日志：记录页面哪一块、哪个偏移量改成什么值（redo log就是）
+- **Undo是逻辑日志：记录的是数据行的逻辑变更，不是磁盘页的物理字节**
+
+举例：
+`update user set name='B' where id=1;`
+- Undo日志记录：id=1，name原来的值是'A'
+- 不是记录：某页偏移0x10位置，原来字节是xx
+
+好处：
+> 回滚的时候，不需要还原整个磁盘页，只需要反向执行这条逻辑操作；
+> 而且不同事务可以操作同一个页，undo的逻辑记录不会锁死页面。
+
+- Redo Log：**物理日志（偏物理，页级修改），崩溃恢复，保证事务持久化**
+- Undo Log：**逻辑日志，事务回滚 + MVCC版本链**
+
+#### 如果undo做成物理日志
+update id=1 name=张三 → 改成李四
+物理undo：记录「这个数据页，偏移xx位置，原来的字节是“张三”」
+回滚的时候：直接把页面对应偏移写回旧字节。
+
+✅ 优点：
+回滚速度很快，直接覆盖页面字节。
+
+❌ 巨大缺点（InnoDB为什么不这么干）
+1. **MVCC没法实现**
+MVCC需要保存一行数据的多个历史版本。
+物理日志绑定**页面偏移**，一旦页面发生行移动（页分裂、记录挪动），偏移直接失效，旧物理undo记录就废了。
+逻辑undo只存行数据`id=1 name=张三`，不管这行在页里怎么挪，永远有效，版本链可以一直追溯。
+
+2. **锁冲突问题**
+多个事务同时修改同一个页面里不同行。
+物理undo绑定页面。如果事务回滚，直接覆盖页面偏移，会把别的事务已经修改的数据覆盖掉，直接破坏隔离性。
+逻辑undo只针对**行**反向操作，互不干扰。
+
+3. **purge清理麻烦**
+后台purge线程要清理很久之前的旧版本。物理undo依赖页面位置，页面结构一变就无法使用。
+
+redo的用途只有一个：**崩溃恢复，重做页面修改**。
+崩溃恢复阶段，数据库是停机重启，没有其他事务在并发修改数据。
+此时页面不会发生并发改动、页分裂，页面偏移是稳定有效的。
+所以redo用物理记录非常合适，顺序写性能好。
+
+> 关键区别：
+> redo 只在**数据库重启、无并发**的时候回放；
+> undo 要在**数据库正常运行、并发读写**的时候回放（回滚、MVCC读取旧版本）。
+
+undo**技术上可以做成物理日志**，但是：
+undo需要支持MVCC版本链、支持并发环境下回滚，页面会动态变化（页分裂、行移位），物理记录会失效。
+所以InnoDB选择**逻辑undo**，记录行级别旧数据，不绑定页面偏移。
+redo只用于宕机后的单机恢复，无并发，适合物理页日志。
+
+Undo理论上可以设计为物理日志，但InnoDB采用逻辑日志。因为Undo要在数据库并发运行时使用（事务回滚、MVCC读取历史版本），页面会发生页分裂、行移动，物理偏移会失效。而Redo仅在宕机重启、无并发场景回放页面修改，适合物理日志。
+
+#### Undo日志存储位置
+InnoDB：
+1. MySQL5.6之前：undo放在共享表空间ibdata1里面
+2. MySQL5.7+：**undo独立表空间**，可以拆成多个undo表空间文件，可收缩（truncate）
+> 注意：undo日志不会事务提交立刻删除！
+> 事务提交后，undo日志不能马上删掉，因为还有别的事务可能需要读取这个历史版本（MVCC）。
+> 等到没有任何事务需要用到这个版本的时候，purge线程才会后台清理undo。
+
+#### Undo的两种类型
+1. **insert undo log**
+事务插入产生。
+insert新记录，其他事务看不到这条新数据。事务提交后，这个undo可以直接被purge清理。
+
+2. **update undo log**
+delete / update产生。
+会产生数据旧版本，会被MVCC版本链引用。**事务提交后不能直接删，等purge线程回收**。
+
+> 注意：delete在InnoDB不是物理删除，只是打删除标记，旧版本进undo。
+
 ## 错误日志  
 错误日志记录的主要内容：  
 - 数据库启动和关闭过程中输出的事件信息  
