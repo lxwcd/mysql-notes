@@ -5631,12 +5631,31 @@ prepare 和 commit
 ## 共享锁和排他锁  
 > [15.7.2.4 Locking Reads](https://dev.mysql.com/doc/refman/8.0/en/innodb-locking-reads.html)  
       
-      
+
+1. **快照读（普通 select）**
+    - 语句：`select * from table where id=1;`
+    - 行为：**不加锁**，走MVCC机制，读取undo日志版本链里历史快照版本
+    - RR隔离级别：事务内第一次快照读生成ReadView，整个事务复用同一个ReadView
+    - RC隔离级别：**每次快照读都会生成新ReadView**
+    - 用途：实现不加锁并发读，提升性能
+
+2. **当前读（加锁读）**
+    - 语句：
+      - `select ... lock in share mode`：加 **S共享锁**
+      - `select ... for update` / update / delete / insert：加 **X排他锁**
+    - 行为：读取**最新已提交数据**，会对记录加锁，不走MVCC的ReadView快照判断
+    - 锁兼容矩阵
+        | 已持有锁 | 申请S锁 | 申请X锁 |
+        | -------- | ------- | ------- |
+        | S锁      | ✅兼容   | ❌阻塞   |
+        | X锁      | ❌阻塞   | ❌阻塞   |
+    - S锁：读读可并行；读写互斥
+    - X锁：任何读写全部互斥
+
 - shared lock，S 锁，共享锁  
 事务要读记录时，需先获取该记录的共享锁  
 - exclusive lock，X 锁，排他锁，或独占锁  
 事务要改记录时，需先获取该记录的排他锁  
-      
       
 事务读取记录时，需要先获取该记录的 S 锁  
 一个事务已经获取某记录的 S 锁后，另一个事务想读该记录，也能获取 S 锁  
@@ -5675,7 +5694,6 @@ MySQL root@(none):db0> SELECT * FROM v1 FOR UPDATE;
       
 #### Next-key Locks  
 可以锁定一个范围且包含记录本身，锁定记录且组织在该记录间隙插入数据  
-      
       
 ### 表级锁  
 #### 表锁  
